@@ -12,27 +12,27 @@ This project implements a **Stacked Ensemble Credit Risk Classifier** that predi
 
 ### Key Features
 
-✅ **Unified Data Pipeline**: Loads and standardizes three credit datasets into a common schema
+**Unified Data Pipeline**: Loads and standardizes three credit datasets into a common schema
 
-✅ **Advanced Preprocessing**: Handles missing values, categorical encoding, and feature scaling via sklearn Pipeline
+**Advanced Preprocessing**: Handles missing values, categorical encoding, and feature scaling via sklearn Pipeline
 
-✅ **Feature Engineering**: 
+**Feature Engineering**: 
 - Correlation-based filtering (removes |r| > 0.85)
 - Variance thresholding
 - Mutual information & chi-square ranking
 
-✅ **Imbalance Handling**: SMOTE + class weights for dealing with imbalanced datasets
+**Imbalance Handling**: SMOTE + class weights for dealing with imbalanced datasets
 
-✅ **Stacked Ensemble Architecture**:
+**Stacked Ensemble Architecture**:
 - **Base Learners**: RandomForest, GradientBoosting, XGBoost, KNeighbors, Neural Network (ANN)
 - **Meta-Learner**: XGBoost or LogisticRegression
 - **Out-of-fold generation** to avoid data leakage
 
-✅ **Comprehensive Evaluation**: Accuracy, AUC-ROC, Precision, Recall, F1, Confusion Matrix, ROC curves, Feature Importance
+**Comprehensive Evaluation**: Accuracy, AUC-ROC, Precision, Recall, F1, Confusion Matrix, ROC curves, Feature Importance
 
-✅ **Modular Code Structure**: Separated concerns across data_loader, preprocessing, feature_selection, models, evaluate modules
+**Modular Code Structure**: Separated concerns across data_loader, preprocessing, feature_selection, models, evaluate modules
 
-✅ **Next-Step Hooks**: Stubs for SHAP explainability, cost-sensitive optimization, and FastAPI deployment
+**Next-Step Hooks**: Stubs for SHAP explainability, cost-sensitive optimization, and FastAPI deployment
 
 ---
 
