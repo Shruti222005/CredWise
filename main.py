@@ -1,10 +1,11 @@
 """
-Updated main.py with proper imports and matplotlib integration.
+Updated main.py with proper SMOTE handling inside CV folds (BUG FIX #4).
 """
 
 import os
 import sys
 import logging
+import json
 import numpy as np
 import pandas as pd
 from typing import Dict, Tuple, Any
@@ -39,7 +40,6 @@ from config import (
 from data_loader import load_and_unify_data
 from preprocessing import preprocess_data
 from feature_selection import select_features
-from imbalance import apply_smote, apply_class_weight
 from models import build_base_learners, build_stacking_classifier
 from evaluate import (
     evaluate_model,
@@ -49,6 +49,55 @@ from evaluate import (
     optimize_threshold_pr_curve,
     print_evaluation_summary,
 )
+
+# Try to import imblearn for SMOTE-in-CV
+try:
+    from imblearn.pipeline import Pipeline as ImbPipeline
+    from imblearn.over_sampling import SMOTE
+    IMBLEARN_AVAILABLE = True
+except ImportError:
+    IMBLEARN_AVAILABLE = False
+    logger.warning("imbalanced-learn not installed. SMOTE in CV will be skipped.")
+
+
+def make_balanced_estimator(base_model):
+    """
+    Wrap a base learner in an imblearn Pipeline with SMOTE.
+    This applies SMOTE fresh inside each CV fold, avoiding data leakage.
+    
+    Args:
+        base_model: Unfitted base learner (sklearn estimator)
+    
+    Returns:
+        ImbPipeline with SMOTE + classifier
+    """
+    if not IMBLEARN_AVAILABLE:
+        logger.warning("imblearn not available; returning base model without SMOTE")
+        return base_model
+    
+    return ImbPipeline([
+        ("smote", SMOTE(sampling_strategy=SMOTE_SAMPLING_STRATEGY, random_state=SMOTE_RANDOM_STATE)),
+        ("clf", base_model)
+    ])
+
+
+def wrap_base_learners_with_smote(base_learners: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Wrap each base learner with SMOTE in a pipeline.
+    
+    Args:
+        base_learners: Dict of base learners
+    
+    Returns:
+        Dict of base learners wrapped with SMOTE
+    """
+    logger.info("Wrapping base learners with SMOTE (applied inside CV folds)...")
+    
+    wrapped = {}
+    for name, model in base_learners.items():
+        wrapped[name] = make_balanced_estimator(model)
+    
+    return wrapped
 
 
 def save_artifacts(
@@ -105,9 +154,31 @@ def save_final_models(
     logger.info("Models saved successfully")
 
 
+def save_results_to_json(results: Dict, timestamp: str) -> None:
+    """
+    Save evaluation results to JSON for reproducibility.
+    BUG FIX #5: Save actual metrics, not reference targets.
+    """
+    logger.info("Saving results to JSON...")
+    
+    results_path = os.path.join(MODELS_DIR, f"results_{timestamp}.json")
+    
+    # Flatten dict to make it JSON-serializable
+    json_results = {
+        "timestamp": results["timestamp"],
+        "status": results["status"],
+        "metrics": results["metrics"],
+    }
+    
+    with open(results_path, 'w') as f:
+        json.dump(json_results, f, indent=2)
+    
+    logger.info(f"Results saved to {results_path}")
+
+
 def run_pipeline() -> Dict[str, Any]:
     """
-    Execute the complete credit risk prediction pipeline.
+    Execute the complete credit risk prediction pipeline with proper SMOTE handling.
     
     Returns:
         Dictionary containing pipeline results and metadata
@@ -155,67 +226,50 @@ def run_pipeline() -> Dict[str, Any]:
         logger.info(f"Features after selection: {X_train_fs.shape[1]}")
         
         # ====================================================================
-        # 4. IMBALANCE HANDLING
+        # 4. MODEL TRAINING (with SMOTE inside CV folds)
         # ====================================================================
-        logger.info("\n[STEP 4] Handling class imbalance...")
-        
-        X_train_balanced = X_train_fs.copy()
-        y_train_balanced = y_train.copy()
-        
-        if IMBALANCE_STRATEGY in ["smote", "both"]:
-            logger.info(f"Applying SMOTE (sampling_strategy={SMOTE_SAMPLING_STRATEGY})...")
-            X_train_balanced, y_train_balanced = apply_smote(
-                X_train_balanced,
-                y_train_balanced,
-                sampling_strategy=SMOTE_SAMPLING_STRATEGY,
-                random_state=SMOTE_RANDOM_STATE
-            )
-            logger.info(f"After SMOTE: {y_train_balanced.value_counts().to_dict()}")
-        
-        # ====================================================================
-        # 5. MODEL TRAINING
-        # ====================================================================
-        logger.info("\n[STEP 5] Building and training models...")
+        logger.info("\n[STEP 4] Building and training models with SMOTE in CV...")
         
         # Build base learners
         base_learners = build_base_learners()
         
-        # Build stacking classifier
-        logger.info("Building stacking classifier...")
-        stacking_clf = build_stacking_classifier(
-            X_train_balanced,
-            y_train_balanced,
-            base_learners
-        )
+        # BUG FIX #4: Wrap base learners with SMOTE (applied inside CV)
+        logger.info("Wrapping base learners with SMOTE...")
+        if IMBLEARN_AVAILABLE:
+            balanced_learners = wrap_base_learners_with_smote(base_learners)
+        else:
+            logger.warning("imblearn not available; using base learners without SMOTE")
+            balanced_learners = base_learners
         
-        # Train stacking classifier
-        logger.info("Training stacking classifier...")
-        stacking_clf.fit(X_train_balanced, y_train_balanced)
+        # Build stacking classifier (SMOTE is now inside CV via wrapped learners)
+        logger.info("Building stacking classifier...")
+        stacking_clf = build_stacking_classifier(balanced_learners)
+        
+        # Train stacking classifier on ORIGINAL (unbalanced) training data
+        # SMOTE will be applied fresh inside each CV fold
+        logger.info("Training stacking classifier (SMOTE applied inside CV folds)...")
+        stacking_clf.fit(X_train_fs, y_train)
         results["models"]["stacking_ensemble"] = stacking_clf
         
-        # Train individual base learners for evaluation
-        logger.info("Training individual base learners...")
-        individual_models = {}
-        for name, model in base_learners.items():
-            model_clone = model.__class__(**model.get_params())
-            model_clone.fit(X_train_balanced, y_train_balanced)
-            individual_models[name] = model_clone
-            results["models"][name] = model_clone
-        
         # ====================================================================
-        # 6. EVALUATION
+        # 5. EVALUATION
         # ====================================================================
-        logger.info("\n[STEP 6] Evaluating models on test set...")
+        logger.info("\n[STEP 5] Evaluating models on test set...")
         
         # Prepare evaluation results
         all_results = {}
         roc_data = {}
         
-        # Evaluate individual base learners
+        # Evaluate each base learner (retrained on full training set)
         logger.info("\nEvaluating base learners...")
-        for name, model in individual_models.items():
-            y_pred = model.predict(X_test_fs)
-            y_pred_proba = model.predict_proba(X_test_fs)[:, 1]
+        individual_models = {}
+        for name, model in base_learners.items():
+            model_clone = model.__class__(**model.get_params())
+            model_clone.fit(X_train_fs, y_train)  # No SMOTE here; only for stacking CV
+            individual_models[name] = model_clone
+            
+            y_pred = model_clone.predict(X_test_fs)
+            y_pred_proba = model_clone.predict_proba(X_test_fs)[:, 1]
             
             metrics = evaluate_model(y_test.values, y_pred, y_pred_proba, name)
             all_results[name] = metrics
@@ -238,9 +292,9 @@ def run_pipeline() -> Dict[str, Any]:
         results["metrics"] = all_results
         
         # ====================================================================
-        # 7. VISUALIZATION & ANALYSIS
+        # 6. VISUALIZATION & ANALYSIS
         # ====================================================================
-        logger.info("\n[STEP 7] Generating visualizations...")
+        logger.info("\n[STEP 6] Generating visualizations...")
         
         # ROC curves
         logger.info("Plotting ROC curves...")
@@ -290,18 +344,21 @@ def run_pipeline() -> Dict[str, Any]:
         results["optimal_threshold"] = opt_threshold
         
         # ====================================================================
-        # 8. SUMMARY & ARTIFACTS
+        # 7. SUMMARY & ARTIFACTS
         # ====================================================================
-        logger.info("\n[STEP 8] Saving artifacts and generating summary...")
+        logger.info("\n[STEP 7] Saving artifacts and generating summary...")
         
         print_evaluation_summary(all_results, TARGET_ACCURACY, TARGET_AUC_ROC)
+        
+        # BUG FIX #5: Save actual results to JSON
+        save_results_to_json(results, timestamp)
         
         # Save preprocessing artifacts
         save_artifacts(
             preprocessor,
             fs_metadata,
             X_train_fs,
-            y_train_balanced,
+            y_train,  # Original training labels (not SMOTE-balanced)
             timestamp
         )
         
@@ -315,6 +372,7 @@ def run_pipeline() -> Dict[str, Any]:
         logger.info("\n" + "="*80)
         logger.info("PIPELINE EXECUTION COMPLETED SUCCESSFULLY")
         logger.info("="*80)
+        logger.info(f"Results saved to: {os.path.join(MODELS_DIR, f'results_{timestamp}.json')}")
         
     except Exception as e:
         logger.error(f"Pipeline failed with error: {str(e)}", exc_info=True)
@@ -332,7 +390,9 @@ if __name__ == "__main__":
     logger.info(f"Timestamp: {results['timestamp']}")
     
     if results['status'] == 'completed':
-        logger.info(f"\nBase Model Performance:")
+        logger.info(f"\n" + "="*80)
+        logger.info("ACTUAL METRICS (not targets):")
+        logger.info("="*80)
         for model_name, metrics in results['metrics'].items():
             logger.info(f"\n{model_name}:")
             for metric_name, value in metrics.items():

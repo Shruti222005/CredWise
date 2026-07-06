@@ -1,8 +1,8 @@
 """
-Data loading module with UCI ML Repo integration.
+Data loading module with UCI ML Repo integration and dynamic schema discovery.
 
-Automatically fetches German Credit, Taiwanese Credit, and Australian Credit
-datasets from UCI ML Repository using ucimlrepo library.
+Automatically fetches datasets from UCI ML Repository and dynamically discovers
+column names instead of relying on hardcoded guesses.
 """
 
 import pandas as pd
@@ -12,6 +12,7 @@ from typing import Tuple, Dict, Optional
 from config import (
     DATASET_COLUMN_MAPPING,
     TARGET_MAPPING,
+    TAIWAN_MAPPING,
     PROCESSED_DATA_DIR,
 )
 
@@ -24,14 +25,38 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-def load_german_credit() -> pd.DataFrame:
+def verify_dataset_columns():
     """
-    Load German Credit dataset from UCI ML Repository.
-    Dataset ID: 144 (or 522 for South German Credit - corrected version)
-    Source: https://archive.ics.uci.edu/dataset/144/statlog+german+credit+data
+    One-time verification: print actual column names from UCI datasets.
+    Run this once manually to verify config.py mappings are correct.
+    """
+    if not UCIMLREPO_AVAILABLE:
+        logger.error("ucimlrepo not installed. Cannot verify columns.")
+        return
+    
+    logger.info("\n" + "="*80)
+    logger.info("DATASET COLUMN VERIFICATION")
+    logger.info("="*80)
+    
+    for name, id_ in [("german", 144), ("taiwanese", 350), ("australian", 143)]:
+        try:
+            d = fetch_ucirepo(id=id_)
+            features_cols = list(d.data.features.columns)
+            targets_cols = list(d.data.targets.columns)
+            logger.info(f"\n{name.upper()} (ID: {id_})")
+            logger.info(f"  Feature columns: {features_cols}")
+            logger.info(f"  Target column: {targets_cols}")
+        except Exception as e:
+            logger.error(f"Error fetching {name}: {str(e)}")
+
+
+def load_german_credit() -> Tuple[pd.DataFrame, list]:
+    """
+    Load German Credit dataset from UCI ML Repository (ID: 144).
+    Dynamically discovers column names and builds mapping.
     
     Returns:
-        DataFrame with features and target combined
+        Tuple of (DataFrame, list of feature column names)
     """
     logger.info("Fetching German Credit dataset from UCI ML Repo (ID: 144)...")
     
@@ -44,27 +69,31 @@ def load_german_credit() -> pd.DataFrame:
         X = german.data.features
         y = german.data.targets
         
+        feature_cols = list(X.columns)
+        target_col = list(y.columns)[0]
+        
+        logger.info(f"German Credit feature columns: {feature_cols}")
+        logger.info(f"German Credit target column: {target_col}")
+        
         df = X.copy()
-        df['target'] = y.iloc[:, 0]  # Extract target column
+        df['credit_risk'] = y.iloc[:, 0]
         
         logger.info(f"German Credit: {df.shape[0]} rows, {df.shape[1]} columns")
-        logger.info(f"Columns: {df.columns.tolist()}")
-        logger.info(f"Target distribution: {df['target'].value_counts().to_dict()}")
+        logger.info(f"Target distribution: {df['credit_risk'].value_counts().to_dict()}")
         
-        return df
+        return df, feature_cols
     except Exception as e:
         logger.error(f"Error loading German Credit dataset: {str(e)}")
         raise
 
 
-def load_taiwanese_credit() -> pd.DataFrame:
+def load_taiwanese_credit() -> Tuple[pd.DataFrame, list]:
     """
-    Load Taiwanese Credit dataset from UCI ML Repository.
-    Dataset ID: 350
-    Source: https://archive.ics.uci.edu/dataset/350/default+of+credit+card+clients
+    Load Taiwanese Credit dataset from UCI ML Repository (ID: 350).
+    Uses verified mapping for Taiwanese dataset.
     
     Returns:
-        DataFrame with features and target combined
+        Tuple of (DataFrame, list of feature column names)
     """
     logger.info("Fetching Taiwanese Credit dataset from UCI ML Repo (ID: 350)...")
     
@@ -77,27 +106,35 @@ def load_taiwanese_credit() -> pd.DataFrame:
         X = taiwan.data.features
         y = taiwan.data.targets
         
-        df = X.copy()
-        df['target'] = y.iloc[:, 0]  # Extract target column
+        feature_cols = list(X.columns)
+        target_col = list(y.columns)[0]
+        
+        logger.info(f"Taiwanese Credit feature columns: {feature_cols}")
+        logger.info(f"Taiwanese Credit target column: {target_col}")
+        
+        # Apply verified mapping
+        rename_dict = {k: v for k, v in TAIWAN_MAPPING.items() if k in feature_cols}
+        X_renamed = X.rename(columns=rename_dict)
+        
+        df = X_renamed.copy()
+        df['credit_risk'] = y.iloc[:, 0]
         
         logger.info(f"Taiwanese Credit: {df.shape[0]} rows, {df.shape[1]} columns")
-        logger.info(f"Columns: {df.columns.tolist()}")
-        logger.info(f"Target distribution: {df['target'].value_counts().to_dict()}")
+        logger.info(f"Target distribution: {df['credit_risk'].value_counts().to_dict()}")
         
-        return df
+        return df, list(X_renamed.columns)
     except Exception as e:
         logger.error(f"Error loading Taiwanese Credit dataset: {str(e)}")
         raise
 
 
-def load_australian_credit() -> pd.DataFrame:
+def load_australian_credit() -> Tuple[pd.DataFrame, list]:
     """
-    Load Australian Credit dataset from UCI ML Repository.
-    Dataset ID: 143
-    Source: https://archive.ics.uci.edu/dataset/143/statlog+australian+credit+approval
+    Load Australian Credit dataset from UCI ML Repository (ID: 143).
+    Dynamically discovers and maps column names.
     
     Returns:
-        DataFrame with features and target combined
+        Tuple of (DataFrame, list of feature column names)
     """
     logger.info("Fetching Australian Credit dataset from UCI ML Repo (ID: 143)...")
     
@@ -110,114 +147,52 @@ def load_australian_credit() -> pd.DataFrame:
         X = australian.data.features
         y = australian.data.targets
         
-        df = X.copy()
-        df['target'] = y.iloc[:, 0]  # Extract target column
+        feature_cols = list(X.columns)
+        target_col = list(y.columns)[0]
+        
+        logger.info(f"Australian Credit feature columns: {feature_cols}")
+        logger.info(f"Australian Credit target column: {target_col}")
+        
+        # Build a generic mapping (A1->attr_1, A2->attr_2, etc.)
+        dynamic_mapping = {col: f"attr_{i+1}" for i, col in enumerate(feature_cols)}
+        X_renamed = X.rename(columns=dynamic_mapping)
+        
+        df = X_renamed.copy()
+        df['credit_risk'] = y.iloc[:, 0]
         
         logger.info(f"Australian Credit: {df.shape[0]} rows, {df.shape[1]} columns")
-        logger.info(f"Columns: {df.columns.tolist()}")
-        logger.info(f"Target distribution: {df['target'].value_counts().to_dict()}")
+        logger.info(f"Target distribution: {df['credit_risk'].value_counts().to_dict()}")
         
-        return df
+        return df, list(X_renamed.columns)
     except Exception as e:
         logger.error(f"Error loading Australian Credit dataset: {str(e)}")
         raise
 
 
-def standardize_german_credit(df: pd.DataFrame) -> pd.DataFrame:
+def standardize_targets(df: pd.DataFrame, dataset_name: str) -> pd.DataFrame:
     """
-    Standardize German Credit dataset schema.
-    Maps original column names to unified schema.
+    Standardize target values to 0 (good) and 1 (bad).
+    
+    Args:
+        df: DataFrame with 'credit_risk' column
+        dataset_name: 'german', 'taiwanese', or 'australian'
+    
+    Returns:
+        DataFrame with standardized target
     """
-    logger.info("Standardizing German Credit schema...")
-    
-    # Create a copy to avoid modifying original
-    df = df.copy()
-    
-    # Rename columns based on mapping
-    rename_dict = DATASET_COLUMN_MAPPING["german"]
-    # Only rename columns that exist
-    rename_dict = {k: v for k, v in rename_dict.items() if k in df.columns}
-    df = df.rename(columns=rename_dict)
-    
-    # Map target variable: 'good' -> 0, 'bad' -> 1
-    target_map = TARGET_MAPPING["german"]
-    if 'credit_risk' in df.columns:
-        df['credit_risk'] = df['credit_risk'].map(lambda x: target_map.get(x.lower() if isinstance(x, str) else x, 1))
-    elif 'target' in df.columns:
-        df = df.rename(columns={'target': 'credit_risk'})
-        df['credit_risk'] = df['credit_risk'].map(lambda x: target_map.get(x.lower() if isinstance(x, str) else x, 1))
-    
-    # Add dataset source identifier
-    df['dataset_source'] = 'german'
-    
-    logger.info(f"Standardized German Credit schema. Target distribution: {df['credit_risk'].value_counts().to_dict()}")
-    return df
-
-
-def standardize_taiwanese_credit(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Standardize Taiwanese Credit dataset schema.
-    Maps original columns and handles multiple repayment history columns.
-    """
-    logger.info("Standardizing Taiwanese Credit schema...")
+    if 'credit_risk' not in df.columns:
+        logger.warning(f"No 'credit_risk' column found in {dataset_name} data")
+        return df
     
     df = df.copy()
+    target_map = TARGET_MAPPING[dataset_name]
     
-    # Rename columns based on mapping
-    rename_dict = DATASET_COLUMN_MAPPING["taiwanese"]
-    rename_dict = {k: v for k, v in rename_dict.items() if k in df.columns}
-    df = df.rename(columns=rename_dict)
+    # Try mapping each unique value
+    for val in df['credit_risk'].unique():
+        if val in target_map:
+            df.loc[df['credit_risk'] == val, 'credit_risk'] = target_map[val]
     
-    # Extract key features from repayment history columns (PAY_1 to PAY_6 in original)
-    # Aggregate repayment status if multiple PAY columns exist
-    pay_cols = [col for col in df.columns if 'PAY' in col.upper() and col not in ['payment_amount_sep']]
-    if len(pay_cols) > 1:
-        logger.info(f"Aggregating {len(pay_cols)} repayment history columns...")
-        df['avg_repayment_status'] = df[pay_cols].mean(axis=1)
-        df['max_repayment_status'] = df[pay_cols].max(axis=1)
-        df = df.drop(columns=pay_cols, errors="ignore")
-    
-    # Map target variable
-    target_map = TARGET_MAPPING["taiwanese"]
-    if 'credit_risk' in df.columns:
-        df['credit_risk'] = df['credit_risk'].map(target_map)
-    elif 'target' in df.columns:
-        df = df.rename(columns={'target': 'credit_risk'})
-        df['credit_risk'] = df['credit_risk'].map(target_map)
-    
-    # Add dataset source identifier
-    df['dataset_source'] = 'taiwanese'
-    
-    logger.info(f"Standardized Taiwanese Credit schema. Target distribution: {df['credit_risk'].value_counts().to_dict()}")
-    return df
-
-
-def standardize_australian_credit(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Standardize Australian Credit dataset schema.
-    Maps original column names (A1, A2, etc.) to unified schema.
-    """
-    logger.info("Standardizing Australian Credit schema...")
-    
-    df = df.copy()
-    
-    # Rename columns based on mapping
-    rename_dict = DATASET_COLUMN_MAPPING["australian"]
-    rename_dict = {k: v for k, v in rename_dict.items() if k in df.columns}
-    df = df.rename(columns=rename_dict)
-    
-    # Map target variable: '+' -> 1 (bad), '-' -> 0 (good)
-    target_map = TARGET_MAPPING["australian"]
-    if 'credit_risk' in df.columns:
-        df['credit_risk'] = df['credit_risk'].map(lambda x: target_map.get(x, 0))
-    elif 'target' in df.columns:
-        df = df.rename(columns={'target': 'credit_risk'})
-        df['credit_risk'] = df['credit_risk'].map(lambda x: target_map.get(x, 0))
-    
-    # Add dataset source identifier
-    df['dataset_source'] = 'australian'
-    
-    logger.info(f"Standardized Australian Credit schema. Target distribution: {df['credit_risk'].value_counts().to_dict()}")
+    logger.info(f"Standardized {dataset_name} target: {df['credit_risk'].value_counts().to_dict()}")
     return df
 
 
@@ -228,7 +203,7 @@ def unify_datasets(
 ) -> pd.DataFrame:
     """
     Merge standardized datasets into a unified training set.
-    Keeps only common columns across all datasets to ensure consistency.
+    Keeps only common columns across all datasets.
     
     Args:
         german_df: Standardized German Credit DataFrame
@@ -240,28 +215,25 @@ def unify_datasets(
     """
     logger.info("Unifying datasets...")
     
-    # Get common columns (excluding dataset_source)
+    # Get common columns
     cols_german = set(german_df.columns)
     cols_taiwanese = set(taiwanese_df.columns)
     cols_australian = set(australian_df.columns)
     
-    # Common columns should include 'credit_risk' and 'dataset_source'
     common_cols = cols_german & cols_taiwanese & cols_australian
-    logger.info(f"Common columns across all datasets: {len(common_cols)}")
-    logger.info(f"Common columns: {sorted(common_cols)}")
     
-    # If very few common columns, include important ones even if not in all datasets
-    if len(common_cols) < 10:
-        logger.warning("Very few common columns. Including key features from each dataset...")
-        # Keep credit_risk and dataset_source mandatory
-        mandatory = {'credit_risk', 'dataset_source'}
-        
-        # Select top features from each
-        german_df = german_df[list(common_cols | mandatory)]
-        taiwanese_df = taiwanese_df[list(common_cols | mandatory)]
-        australian_df = australian_df[list(common_cols | mandatory)]
-        
-        common_cols = common_cols | mandatory
+    logger.info(f"German columns: {len(cols_german)}")
+    logger.info(f"Taiwanese columns: {len(cols_taiwanese)}")
+    logger.info(f"Australian columns: {len(cols_australian)}")
+    logger.info(f"Common columns: {len(common_cols)}")
+    
+    # BUG FIX #2: Assert loudly if common columns are too few
+    assert len(common_cols) >= 10, (
+        f"Only {len(common_cols)} common columns found after mapping. "
+        f"This indicates DATASET_COLUMN_MAPPING is broken. "
+        f"Check actual column names from ucimlrepo against config.py. "
+        f"Common cols: {sorted(common_cols)}"
+    )
     
     # Select and concatenate
     unified_df = pd.concat(
@@ -275,8 +247,8 @@ def unify_datasets(
     )
     
     logger.info(f"Unified dataset shape: {unified_df.shape}")
-    logger.info(f"Target distribution:\n{unified_df['credit_risk'].value_counts()}")
-    logger.info(f"Dataset source distribution:\n{unified_df['dataset_source'].value_counts()}")
+    logger.info(f"Target distribution: {unified_df['credit_risk'].value_counts().to_dict()}")
+    logger.info(f"Common feature columns kept: {sorted(common_cols)}")
     
     return unified_df
 
@@ -289,19 +261,24 @@ def load_and_unify_data() -> Tuple[pd.DataFrame, Dict]:
         Tuple of (unified_df, metadata_dict)
     """
     logger.info("\n" + "="*80)
-    logger.info("Starting data loading and unification from UCI ML Repository...")
+    logger.info("DATA LOADING AND UNIFICATION")
     logger.info("="*80)
     
     try:
         # Load individual datasets
-        german = load_german_credit()
-        taiwanese = load_taiwanese_credit()
-        australian = load_australian_credit()
+        german, german_cols = load_german_credit()
+        taiwanese, taiwanese_cols = load_taiwanese_credit()
+        australian, australian_cols = load_australian_credit()
         
-        # Standardize schemas
-        german = standardize_german_credit(german)
-        taiwanese = standardize_taiwanese_credit(taiwanese)
-        australian = standardize_australian_credit(australian)
+        logger.info(f"\nSuccessfully loaded datasets:")
+        logger.info(f"  German: {german.shape}")
+        logger.info(f"  Taiwanese: {taiwanese.shape}")
+        logger.info(f"  Australian: {australian.shape}")
+        
+        # Standardize targets
+        german = standardize_targets(german, "german")
+        taiwanese = standardize_targets(taiwanese, "taiwanese")
+        australian = standardize_targets(australian, "australian")
         
         # Unify
         unified = unify_datasets(german, taiwanese, australian)
@@ -312,14 +289,11 @@ def load_and_unify_data() -> Tuple[pd.DataFrame, Dict]:
             "total_columns": len(unified.columns),
             "target_distribution": unified["credit_risk"].value_counts().to_dict(),
             "class_distribution_pct": (unified["credit_risk"].value_counts(normalize=True) * 100).round(2).to_dict(),
-            "dataset_source_distribution": unified["dataset_source"].value_counts().to_dict(),
             "missing_values": unified.isnull().sum().to_dict(),
-            "feature_dtypes": unified.dtypes.to_dict(),
+            "feature_columns": [col for col in unified.columns if col != "credit_risk"],
         }
         
-        logger.info("Data loading and unification complete!")
-        logger.info(f"Metadata: {metadata}")
-        
+        logger.info("\nData loading and unification complete!")
         return unified, metadata
         
     except Exception as e:
@@ -331,6 +305,12 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
     
+    # First, verify dataset columns
+    logger.info("Running column verification...")
+    verify_dataset_columns()
+    
+    # Then load and unify
+    logger.info("\nLoading and unifying datasets...")
     df, meta = load_and_unify_data()
     print("\n" + "="*80)
     print("UNIFIED DATASET PREVIEW")

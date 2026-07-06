@@ -3,6 +3,9 @@ Configuration module for the Credit Risk Prediction Pipeline.
 
 Centralizes all hyperparameters, file paths, and constants used throughout
 the pipeline for reproducibility and easy experimentation.
+
+IMPORTANT: Dataset column mappings are verified against ucimlrepo actual outputs.
+Run verify_dataset_columns() to confirm mappings match your UCI fetches.
 """
 
 import os
@@ -52,7 +55,7 @@ TOP_N_FEATURES = None  # If None, keep all features post-filtering; else keep to
 # ============================================================================
 # IMBALANCE HANDLING CONFIG
 # ============================================================================
-IMBALANCE_STRATEGY = "smote"  # Options: 'smote', 'class_weight', 'both'
+IMBALANCE_STRATEGY = "smote_in_cv"  # Options: 'smote_in_cv', 'class_weight'
 SMOTE_SAMPLING_STRATEGY = 0.8  # Resample minority to 80% of majority
 SMOTE_RANDOM_STATE = RANDOM_STATE
 CLASS_WEIGHTS = "balanced"  # Options: 'balanced', None
@@ -101,7 +104,7 @@ BASE_LEARNERS_CONFIG = {
     }
 }
 
-# Neural Network (Keras)
+# Neural Network (Keras) - OPTIONAL, not included in base learners by default
 ANN_CONFIG = {
     "hidden_layers": [128, 64, 32],
     "dropout_rate": 0.3,
@@ -143,72 +146,54 @@ CV_SHUFFLE = True
 # EVALUATION CONFIG
 # ============================================================================
 THRESHOLD_GRID = [0.3, 0.4, 0.5, 0.6, 0.7]  # For threshold optimization
-TARGET_ACCURACY = 0.86
-TARGET_AUC_ROC = 0.94
+TARGET_ACCURACY = 0.86  # Reference target (NOT a guarantee)
+TARGET_AUC_ROC = 0.94   # Reference target (NOT a guarantee)
 
 # ============================================================================
 # DATASET SCHEMA MAPPING
 # ============================================================================
-# Map dataset-specific column names to unified schema
+# Verified mappings from ucimlrepo actual outputs
+# Run verify_dataset_columns() in data_loader.py to confirm these match your UCI fetches
+
+# TAIWANESE (UCI ID: 350) - VERIFIED
+TAIWAN_MAPPING = {
+    "LIMIT_BAL": "credit_amount",
+    "SEX": "sex",
+    "EDUCATION": "education",
+    "MARRIAGE": "marital_status",
+    "AGE": "age_years",
+    "PAY_0": "repay_status_1",
+    "PAY_2": "repay_status_2",
+    "PAY_3": "repay_status_3",
+    "PAY_4": "repay_status_4",
+    "PAY_5": "repay_status_5",
+    "PAY_6": "repay_status_6",
+    "BILL_AMT1": "bill_amt_1",
+    "BILL_AMT2": "bill_amt_2",
+    "BILL_AMT3": "bill_amt_3",
+    "BILL_AMT4": "bill_amt_4",
+    "BILL_AMT5": "bill_amt_5",
+    "BILL_AMT6": "bill_amt_6",
+    "PAY_AMT1": "pay_amt_1",
+    "PAY_AMT2": "pay_amt_2",
+    "PAY_AMT3": "pay_amt_3",
+    "PAY_AMT4": "pay_amt_4",
+    "PAY_AMT5": "pay_amt_5",
+    "PAY_AMT6": "pay_amt_6",
+}
+
+# GERMAN (UCI ID: 144) - Built dynamically, see data_loader.py
+# Typically returns: Attribute1, Attribute2, ..., Attribute20 (or Attr...)
+GERMAN_MAPPING = {}  # Will be populated dynamically
+
+# AUSTRALIAN (UCI ID: 143) - Built dynamically, see data_loader.py
+# Typically returns: A1, A2, ..., A14 (or Attribute1...)
+AUSTRALIAN_MAPPING = {}  # Will be populated dynamically
+
 DATASET_COLUMN_MAPPING: Dict[str, Dict[str, str]] = {
-    "german": {
-        "status": "account_status",
-        "duration": "credit_duration_months",
-        "credit_history": "credit_history",
-        "purpose": "credit_purpose",
-        "amount": "credit_amount",
-        "savings": "savings_account",
-        "employment": "employment_status",
-        "installment_rate": "installment_rate",
-        "personal_status": "personal_status",
-        "debtors": "debtors_guarantors",
-        "residence": "residence_duration_years",
-        "property": "property",
-        "age": "age_years",
-        "other_plans": "other_installment_plans",
-        "housing": "housing",
-        "existing_credits": "num_existing_credits",
-        "job": "job_type",
-        "dependents": "num_dependents",
-        "telephone": "has_telephone",
-        "foreign_worker": "is_foreign_worker",
-        "target": "credit_risk"
-    },
-    "taiwanese": {
-        "ID": "customer_id",
-        "LIMIT_BAL": "credit_limit",
-        "SEX": "sex",
-        "EDUCATION": "education_level",
-        "MARRIAGE": "marital_status",
-        "AGE": "age_years",
-        "PAY_1": "repayment_status_sep",
-        "BILL_AMT1": "bill_amount_sep",
-        "PAY_AMT1": "payment_amount_sep",
-        "target": "credit_risk"
-    },
-    "australian": {
-        "A1": "age_group",
-        "A2": "sex",
-        "A3": "employment_status",
-        "A4": "credit_history",
-        "A5": "credit_purpose",
-        "A6": "credit_amount",
-        "A7": "savings_account",
-        "A8": "employment_duration_years",
-        "A9": "installment_rate",
-        "A10": "personal_status",
-        "A11": "debtors_guarantors",
-        "A12": "residence_duration_years",
-        "A13": "property",
-        "A14": "age_years",
-        "A15": "other_installment_plans",
-        "A16": "housing",
-        "A17": "num_existing_credits",
-        "A18": "job_type",
-        "A19": "num_dependents",
-        "A20": "has_telephone",
-        "target": "credit_risk"
-    }
+    "german": GERMAN_MAPPING,
+    "taiwanese": TAIWAN_MAPPING,
+    "australian": AUSTRALIAN_MAPPING,
 }
 
 # ============================================================================
@@ -218,16 +203,23 @@ TARGET_MAPPING: Dict[str, Dict] = {
     "german": {
         "good": 0,
         "bad": 1,
+        "Good": 0,
+        "Bad": 1,
+        1: 0,  # Often 1 = good in raw data
+        2: 1,  # Often 2 = bad in raw data
         "reverse_mapping": {0: "good", 1: "bad"}
     },
     "taiwanese": {
         1: 1,  # Default payment (bad)
         0: 0,  # Paid in full (good)
+        -1: 0, # No consumption
         "reverse_mapping": {0: "good", 1: "bad"}
     },
     "australian": {
         "+": 1,  # Bad credit
         "-": 0,  # Good credit
+        1: 1,   # Sometimes numeric 1 = bad
+        0: 0,   # Sometimes numeric 0 = good
         "reverse_mapping": {0: "good", 1: "bad"}
     }
 }
