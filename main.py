@@ -1,13 +1,5 @@
 """
-Main orchestration script for the Credit Risk Prediction Pipeline.
-
-Coordinates all steps:
-1. Data loading and unification
-2. Preprocessing
-3. Feature selection
-4. Imbalance handling
-5. Model training (base learners + stacking)
-6. Evaluation
+Updated main.py with proper imports and matplotlib integration.
 """
 
 import os
@@ -17,6 +9,11 @@ import numpy as np
 import pandas as pd
 from typing import Dict, Tuple, Any
 from datetime import datetime
+
+# Configure matplotlib to use non-interactive backend
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 # Configure logging
 logging.basicConfig(
@@ -43,7 +40,7 @@ from data_loader import load_and_unify_data
 from preprocessing import preprocess_data
 from feature_selection import select_features
 from imbalance import apply_smote, apply_class_weight
-from models import build_base_learners, build_stacking_classifier, generate_out_of_fold_predictions
+from models import build_base_learners, build_stacking_classifier
 from evaluate import (
     evaluate_model,
     plot_confusion_matrix,
@@ -251,10 +248,11 @@ def run_pipeline() -> Dict[str, Any]:
             roc_data,
             output_path=os.path.join(MODELS_DIR, f"roc_curves_{timestamp}.png")
         )
+        plt.close(fig_roc)
         
         # Confusion matrices
         logger.info("Plotting confusion matrices...")
-        fig_cm_stack, ax_cm_stack = plt.subplots()
+        fig_cm_stack, ax_cm_stack = plt.subplots(figsize=(6, 5))
         plot_confusion_matrix(
             y_test.values,
             y_pred_stack,
@@ -266,17 +264,20 @@ def run_pipeline() -> Dict[str, Any]:
             dpi=300,
             bbox_inches="tight"
         )
+        plt.close(fig_cm_stack)
         
         # Feature importance (from Random Forest)
         if "RandomForest" in individual_models:
             logger.info("Plotting feature importance...")
-            plot_feature_importance(
+            fig_fi = plot_feature_importance(
                 individual_models["RandomForest"],
                 X_train_fs.columns.tolist(),
                 "Random Forest",
                 top_n=20,
                 output_path=os.path.join(MODELS_DIR, f"feature_importance_{timestamp}.png")
             )
+            if fig_fi:
+                plt.close(fig_fi)
         
         # Threshold optimization
         logger.info("Optimizing threshold via precision-recall curve...")
@@ -285,6 +286,7 @@ def run_pipeline() -> Dict[str, Any]:
             y_pred_proba_stack,
             output_path=os.path.join(MODELS_DIR, f"threshold_optimization_{timestamp}.png")
         )
+        plt.close(fig_pr)
         results["optimal_threshold"] = opt_threshold
         
         # ====================================================================
@@ -323,9 +325,6 @@ def run_pipeline() -> Dict[str, Any]:
 
 
 if __name__ == "__main__":
-    import matplotlib.pyplot as plt
-    plt.switch_backend('Agg')  # Use non-interactive backend
-    
     results = run_pipeline()
     
     logger.info(f"\nPipeline Results Summary:")
